@@ -44,13 +44,27 @@ class EMD_dealt:
                         down_list.append(down)
                 # aceemd
                 else:
+                    up_list = []
+                    down_list = []
                     for i in range(imf_times // 2):
                         _exemd_data = _data.copy() + noise_list[2*i] * myemd.snr(_data, noise_list[2*i])
                         _acemd_data = _data.copy() + noise_list[2*i+1] * myemd.snr(_data, noise_list[2*i+1])
                         up, down = myemd.aceemd(_exemd_data, _acemd_data, 0.3)
-
+                        
                         up_list.append(up)
                         down_list.append(down)
+                    
+                    up_mean = np.mean(up_list, axis=0)
+                    down_mean = np.mean(down_list, axis=0)
+                    emd_tmp.append((up_mean + down_mean) / 2)
+                #else:
+                #    for i in range(imf_times // 2):
+                #        _exemd_data = _data.copy() + noise_list[2*i] * myemd.snr(_data, noise_list[2*i])
+                #        _acemd_data = _data.copy() + noise_list[2*i+1] * myemd.snr(_data, noise_list[2*i+1])
+                #        up, down = myemd.aceemd(_exemd_data, _acemd_data, 0.3)
+                #
+                #        up_list.append(up)
+                #        down_list.append(down)
                 # denoise
                 emd_tmp.append((np.array(up_list).mean(axis=0) + np.array(down_list).mean(axis=0)) / 2)
             emd_result.append(np.array(emd_tmp).T)
@@ -123,11 +137,41 @@ class EmdData(Dataset):
     def __getitem__(self, item: int):
         return self.input_data[item], self.stamp[item], self.result_data[item]
 
-    def anti_normalize_data(self, true: np.array, predict: np.array):
+    def anti_normalize_data2(self, true: np.array, predict: np.array):
         anti_true = true * self.max_set + self.min_set
         anti_predict = predict * self.max_set.reshape(-1,1) + self.min_set.reshape(-1,1)
         return anti_true, anti_predict
 
+    def anti_normalize_data3(self, true: np.array, predict: np.array):
+        anti_true = true * self.max_set[-predict.shape[1]:] + self.min_set[-predict.shape[1]:]
+        anti_predict = predict * self.max_set[-predict.shape[1]:].reshape(1, -1) + self.min_set[-predict.shape[1]:].reshape(1, -1)
+        return anti_true, anti_predict
+    
+    def anti_normalize_data4(self, true: np.array, predict: np.array):
+        anti_true = true * self.max_set[-true.shape[1]:].reshape(1, -1) + self.min_set[-true.shape[1]:].reshape(1, -1)
+        anti_predict = predict * self.max_set[-predict.shape[1]:].reshape(1, -1) + self.min_set[-predict.shape[1]:].reshape(1, -1)
+        return anti_true, anti_predict
+    def anti_normalize_data5(self, true: np.array, predict: np.array):
+        max_set = self.max_set[-true.shape[1]:].reshape(1, -1)
+        min_set = self.min_set[-true.shape[1]:].reshape(1, -1)
+        anti_true = true * np.tile(max_set, (true.shape[0], 1)) + np.tile(min_set, (true.shape[0], 1))
+        
+        max_set = self.max_set[-predict.shape[1]:].reshape(1, -1)
+        min_set = self.min_set[-predict.shape[1]:].reshape(1, -1)
+        anti_predict = predict * np.tile(max_set, (predict.shape[0], 1)) + np.tile(min_set, (predict.shape[0], 1))
+
+        return anti_true, anti_predict
+    
+    def anti_normalize_data(self, true: np.array, predict: np.array):
+        max_set = self.max_set[-true.shape[1]:].reshape(1, -1)
+        min_set = self.min_set[-true.shape[1]:].reshape(1, -1)
+        anti_true = true * np.tile(max_set[:, :true.shape[1]], (true.shape[0], 1)) + np.tile(min_set[:, :true.shape[1]], (true.shape[0], 1))
+        
+        max_set = self.max_set[-predict.shape[1]:].reshape(1, -1)
+        min_set = self.min_set[-predict.shape[1]:].reshape(1, -1)
+        anti_predict = predict * np.tile(max_set[:, :predict.shape[1]], (predict.shape[0], 1)) + np.tile(min_set[:, :predict.shape[1]], (predict.shape[0], 1))
+        
+        return anti_true, anti_predict
 
 class EndToEndData(Dataset):
     def __init__(self, data_set: pd.DataFrame, unit_size: int, predict_size: int, model_col: list, result_col: list):

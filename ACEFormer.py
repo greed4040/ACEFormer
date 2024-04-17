@@ -62,7 +62,8 @@ class ACEFormer(nn.Module):
 
         # pretreatment module
         ## data embedding
-        self.ExpandConv = ExpandEmbedding(data_dim, embed_dim)
+        #self.ExpandConv = ExpandEmbedding(data_dim, embed_dim)# для проверки
+        self.ExpandConv = ExpandEmbedding(12, embed_dim)
         ## local position
         self.position_emb = PositionalEmbedding(embed_dim)
         ## dropout
@@ -75,6 +76,7 @@ class ACEFormer(nn.Module):
         self.dis_attn = nn.ModuleList()
         self.distill = nn.ModuleList()
         ## create distillation module
+        self.hidden_local = []
         for num in range(dis_layer):
             embed_tmp = embed_dim // pow(2, num)
             self.dis_attn.append(
@@ -86,6 +88,9 @@ class ACEFormer(nn.Module):
             )
             self.distill.append(Distilling(embed_tmp))
             self.hidden_local.append(nn.Linear(unit_size, embed_tmp // 2))
+            self.temporal.append(nn.Linear(embed_tmp, embed_tmp // 2))  # Add this line
+
+        self.hidden_local = nn.ModuleList(self.hidden_local)
 
         # attention module
         self.attn = nn.ModuleList(
@@ -96,8 +101,9 @@ class ACEFormer(nn.Module):
             ) for _ in range(attn_layer)
         )
 
+
         # projection
-        self.full_connect = nn.Linear(embed_tmp // 2, 1, bias=True)
+        self.full_connect = nn.Linear(embed_tmp // 2, 2, bias=True)
 
     def forward(self, data: torch.tensor):
         # data embedding
@@ -161,19 +167,24 @@ def test(model, test_data: EmdData, predict_size: int, device: str):
     model.eval()
     true, predict = [], []
     with torch.no_grad():
-        for (data, stamp, true_data) in test_data:
+        #for (data, stamp, true_data) in test_data:
+        for (data, _, true_data) in test_data:
             data = torch.tensor(data).unsqueeze(0).float().to(device)
-            stamp = torch.tensor(stamp).unsqueeze(0).int().to(device)
+            #stamp = torch.tensor(stamp).unsqueeze(0).int().to(device)
 
             true.append(true_data[-predict_size])
-            outputs, _, _ = model(data, stamp)
+            #outputs, _, _ = model(data, stamp)
+            outputs = model(data)
+            #print(type(outputs))
             predict.append(outputs.reshape(-1)[-predict_size:].tolist())
 
     true, predict = test_data.anti_normalize_data(np.array(true), np.array(predict))
     return true, predict
 
 def run_model(source_data: pd.DataFrame, index: int, device: str, backtest_num: int, iteration: int, save_path: str):
-    print("Start experiment index : " + str(index) + " ......")
+    print(f"Running model with arguments: source_data={source_data.shape}, index={index}, device={device}, backtest_num={backtest_num}, iteration={iteration}, save_path={save_path}")
+
+    print(f"Start experiment index: {index}")
     # hyper parameter
     batch_size = 64
     emd_col = ['close', 'close_x', 'close_y', 'vol', 'vol_x', 'vol_y']
@@ -184,9 +195,10 @@ def run_model(source_data: pd.DataFrame, index: int, device: str, backtest_num: 
     data_set = AllData(source_data=source_data, verify_size=50, test_size=100, unit_size=30, predict_size=5, emd_col=emd_col, result_col=result_col, back_num=backtest_num, data_type=EmdData)
     former_train_set, former_verify_set, former_test_set = data_set.get_data()
     true_train_set, true_verify_set, true_test_set = data_set.get_not_normaliza_data()
+    print(f"Dataset loaded: train={len(former_train_set)}, verify={len(former_verify_set)}, test={len(former_test_set)}")
 
-    # create model
-    print("create model")
+    # create model 
+    print("Creating model...")
     model = ACEFormer(data_dim=len(emd_col), embed_dim=64, forward_dim=256, unit_size=30, dis_layer=3, attn_layer=2, dropout=0.1, factor=5).to(device)
 
     train_true_set, train_predict_set = [], []
@@ -196,21 +208,21 @@ def run_model(source_data: pd.DataFrame, index: int, device: str, backtest_num: 
         # training model with train set
         model = train(model, former_train_set[i], batch_size, device, iteration)
         # training
-        true, predict = test(model, former_train_set[i], predict_size=5, device=dev)
+        true, predict = test(model, former_train_set[i], predict_size=5, device=device)
         train_true_set.append(true)
         train_predict_set.append(predict)
-        # verify
-        true, predict = test(model, former_verify_set[i], predict_size=5, device=dev)
+        # verify 
+        true, predict = test(model, former_verify_set[i], predict_size=5, device=device)
         verify_true_set.append(true)
         verify_predict_set.append(predict)
         # test
-        true, predict = test(model, former_test_set[i], predict_size=5, device=dev)
+        true, predict = test(model, former_test_set[i], predict_size=5, device=device)
         test_true_set.append(true)
         test_predict_set.append(predict)
 
     all_set_dict = {
         "true_train_set": true_train_set,
-        "true_verify_set": true_verify_set,
+        "true_verify_set": true_verify_set, 
         "true_test_set": true_test_set,
         "train_true_set": train_true_set,
         "train_predict_set": train_predict_set,
@@ -220,35 +232,39 @@ def run_model(source_data: pd.DataFrame, index: int, device: str, backtest_num: 
         "test_predict_set": test_predict_set
     }
 
-    np.save(save_path.format(index), all_set_dict)
+    elapsed_time = time.time() - start_time
+    # Create the directory if it doesn't exist
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
     
-    print("Save result to " + save_path.format(index) + ", spend time " + str((time.time() - start_time) // 60 // 60) + "h " + str((time.time() - start_time) // 60 % 60) + "min.")
+    print(f"Saving results to {save_path}")
+    np.save(save_path, all_set_dict)
+    print(f"Results saved to {save_path}")
+
+    print(f"Experiment {index} completed in {elapsed_time // 60:.0f}min {elapsed_time % 60:.0f}sec.")
+    return all_set_dict
 
 if __name__ == "__main__":
-    print('args : ', sys.argv)
-    print('script name : ', sys.argv[0])
-    # process and GPU use
-    dev = sys.argv[1]
-    # experiment times for each data
-    model_time = int(sys.argv[2])
-    # path for save predict result
-    result_save = sys.argv[3]
-    # data file
-    data_path = sys.argv[4]
-    # the number of the dataset splits
-    back_num = int(sys.argv[5])
-    # iteration number
-    itera_num = int(sys.argv[6])
-    # path of save result
-    result_path = result_save + "result_set_" + data_path[10:-4] + "_{}.npy"
-
-    # multiplt processing
-    pool = multiprocessing.Pool(model_time)
-    source_data = pd.read_csv(data_path)
-    for model_i in range(1, model_time + 1):
-        pool.apply_async(run_model, (source_data, model_i, dev, back_num, itera_num, result_path))
-
-    pool.close()
-    pool.join()
+    print(f"Current working directory: {os.getcwd()}")
+    print(f"Script arguments: {sys.argv}")
+    print(f"Script name: {sys.argv[0]}")
     
-    print("Finish training all experment models.")
+    dev = sys.argv[1]  # device
+    model_time = int(sys.argv[2])  # experiment times for each data
+    result_save = sys.argv[3]  # directory to save predict result
+    data_path = sys.argv[4]  # data file
+    back_num = int(sys.argv[5])  # number of dataset splits
+    itera_num = int(sys.argv[6])  # iteration number
+
+    # path to save results
+    result_path = os.path.join(result_save, f"result_set_{os.path.basename(data_path)[:-4]}_" + "{}.npy")
+    print(f"Result path: {result_path}")
+
+    source_data = pd.read_csv(data_path)
+
+    all_results = []
+    for model_i in range(1, model_time + 1):
+        result = run_model(source_data, model_i, dev, back_num, itera_num, result_path.format(model_i))
+        all_results.append(result)
+        
+    print("Finished training all experiment models.")
+    # Optionally, you can aggregate the results here and print a summary

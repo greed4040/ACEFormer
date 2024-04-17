@@ -231,3 +231,25 @@ def aceemd(extsignal, midsignal, alpha = 0.5):
     if isinstance(ext_up_envelopes, int) and isinstance(mid_up_envelopes, int) and isinstance(ext_down_envelopes, int) and isinstance(mid_down_envelopes, int):
         return signal, signal
     return ext_up_envelopes * (1-alpha) + mid_up_envelopes * alpha, ext_down_envelopes * (1-alpha) + mid_down_envelopes * alpha
+
+
+def snr(signal, noise):
+    """
+    Calculates Signal-to-Noise Ratio (SNR) between the original signal and the noise.
+    
+    Args:
+        signal (array-like): The original signal.
+        noise (array-like): The noise extracted from the signal.
+        
+    Returns:
+        float: The SNR value in decibels.
+    """
+    signal_power = np.mean(signal ** 2)
+    noise_power = np.mean(noise ** 2)
+    
+    # Avoid divide by zero
+    if noise_power == 0:
+        return np.inf
+    
+    snr = 10 * np.log10(signal_power / noise_power)
+    return snr
